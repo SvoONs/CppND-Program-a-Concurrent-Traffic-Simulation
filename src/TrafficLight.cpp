@@ -5,28 +5,27 @@
 
 /* Implementation of class "MessageQueue" */
 
-template <typename T>
-T MessageQueue<T>::receive()
-{
-    // FP.5a : The method receive should use std::unique_lock<std::mutex> and _condition.wait()
-    // to wait for and receive new messages and pull them from the queue using move semantics.
-    // The received object should then be returned by the receive function.
-    std::unique_lock<std::mutex> uLock(_mtx);
-    _cond.wait(uLock);
-    T msg = std::move(_queue.back());
-    _queue.pop_back();
-    return msg;
+template <typename T> T MessageQueue<T>::receive() {
+  // FP.5a : The method receive should use std::unique_lock<std::mutex> and
+  // _condition.wait() to wait for and receive new messages and pull them from
+  // the queue using move semantics. The received object should then be returned
+  // by the receive function.
+  std::unique_lock<std::mutex> uLock(_mtx);
+  _cond.wait(uLock, [this] { return !_queue.empty(); });
+  T msg = std::move(_queue.back());
+  _queue.pop_back();
+  return msg;
 }
 
-template <typename T>
-void MessageQueue<T>::send(T &&msg)
-{
-    // FP.4a : The method send should use the mechanisms std::lock_guard<std::mutex>
-    // as well as _condition.notify_one() to add a new message to the queue and afterwards send a notification.
-    std::lock_guard<std::mutex> uLock(_mtx);
-    std::cout << "   Message " << msg << " has been sent to the queue" << std::endl;
-    _queue.push_back(std::move(msg));
-    _cond.notify_one();
+template <typename T> void MessageQueue<T>::send(T &&msg) {
+  // FP.4a : The method send should use the mechanisms
+  // std::lock_guard<std::mutex> as well as _condition.notify_one() to add a new
+  // message to the queue and afterwards send a notification.
+  std::lock_guard<std::mutex> uLock(_mtx);
+  std::cout << "   Message " << msg << " has been sent to the queue"
+            << std::endl;
+  _queue.push_back(std::move(msg));
+  _cond.notify_one();
 }
 
 /* Implementation of class "TrafficLight" */
@@ -38,11 +37,11 @@ void TrafficLight::waitForGreen() {
   // infinite while-loop runs and repeatedly calls the receive function on the
   // message queue. Once it receives TrafficLightPhase::green, the method
   // returns.
-  while (true)
-  {
-      if(_msgQueue.receive()==TrafficLightPhase::green) {
-          break;
-      }
+  while (true) {
+    auto signal = _msgQueue.receive();
+    if (signal == TrafficLightPhase::green) {
+      return;
+    }
   }
 }
 
@@ -63,33 +62,25 @@ void TrafficLight::cycleThroughPhases() {
   // move semantics. The cycle duration should be a random value between 4 and 6
   // seconds. Also, the while-loop should use std::this_thread::sleep_for to
   // wait 1ms between two cycles.
-  std::chrono::duration<double> elapsed_time{0};
-  auto t1 = std::chrono::system_clock::now();
-  int const max_duration = 6,
-            min_duration = 4; // max and min duration for cycle duration in s
-  double cycle_duration =
-      min_duration +
-      (double)rand() / ((double)(RAND_MAX / (max_duration - min_duration)));
+  double elapsed_time{0};
+  auto t1 = std::chrono::high_resolution_clock::now();
+  // max and min for cycle duration in ms
+  int const max_duration = 6000, min_duration = 4000;
+  int cycle_duration =
+      min_duration + rand() % (max_duration - min_duration + 1);
   while (true) {
-    auto t2 = std::chrono::system_clock::now();
-    elapsed_time += t2 - t1;
-    if (elapsed_time.count() >= cycle_duration) {
-      TrafficLightPhase signal = getCurrentPhase() == TrafficLightPhase::green
-                                     ? TrafficLightPhase::red
-                                     : TrafficLightPhase::green;
-      _msgQueue.send(std::move(signal));
-      elapsed_time = std::chrono::duration<double>(
-          0); // reset elapsed time in current cycle
-      cycle_duration =
-          min_duration +
-          (double)rand() /
-              ((double)(RAND_MAX /
-                        (max_duration -
-                         min_duration))); // determine new random cycle duration
-                                          // between 4 and 6s
+    auto t2 = std::chrono::high_resolution_clock::now();
+    elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    if (elapsed_time >= cycle_duration) {
+      _currentPhase = _currentPhase == TrafficLightPhase::green
+                          ? TrafficLightPhase::red
+                          : TrafficLightPhase::green;
+      _msgQueue.send(std::move(_currentPhase));
+      // reset elapsed time in current cycle
+      elapsed_time = 0;
+      t1 = std::chrono::high_resolution_clock::now();
     }
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(1)); // prevent burning through CPU
-    t1 = std::chrono::system_clock::now();
+    // prevent burning through CPU
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 }
